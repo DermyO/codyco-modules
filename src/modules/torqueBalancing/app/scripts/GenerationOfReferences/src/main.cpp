@@ -1,5 +1,3 @@
-
-
 #include <yarp/os/ResourceFinder.h>
 #include <yarp/os/Value.h>
 #include <yarp/os/LogStream.h>
@@ -23,6 +21,7 @@ int main(int argc, char **argv) {
         std::cout<< "\t--comDes           :Desired CoM of the robot." << std::endl;
         std::cout<< "\t--qDes             :Desired joint positions of the robot." << std::endl;
         std::cout<< "\t--feetInSupport    :left, right or both" << std::endl;
+        std::cout<< "\t--jointMapping     :[optional]ordered list of joints name which should be used in the optimization. Size must match size of qDes. If missing all joints are assumed" << std::endl;
         return 0;
     }
 
@@ -49,6 +48,8 @@ int main(int argc, char **argv) {
     desiredCoM[1] = comList->get(1).asDouble();
     desiredCoM[2] = comList->get(2).asDouble();
 
+    yInfo() << "Desired CoM is: " << desiredCoM.toString();
+
     //read desired Joints configuration
     //(Which joints!? The model has more joints than we need. We have to map this stuff)
     if (!resourceFinder.check("qDes", "Checking desired joint configuration parameter")) {
@@ -56,6 +57,17 @@ int main(int argc, char **argv) {
         return -1;
     }
     Value &qDes = resourceFinder.find("qDes");
+    if (!qDes.isList()) {
+        yError("qDes parameter should be a list");
+        return -2;
+    }
+    Bottle *qDesBottle = qDes.asList();
+    yarp::sig::Vector desiredJoints(qDesBottle->size());
+    for (unsigned i = 0; i < qDesBottle->size(); i++) {
+        desiredJoints[i] = qDesBottle->get(i).asDouble();
+    }
+
+    yInfo() << "Desired joint configuration is: " << desiredJoints.toString();
 
     //read which foot/feet is in support
     if (!resourceFinder.check("feetInSupport", "Checking feet in support parameter")) {
@@ -63,15 +75,36 @@ int main(int argc, char **argv) {
         return -1;
     }
     Value &feet = resourceFinder.find("feetInSupport");
+    std::string feetInSupport = feet.asString();
+
+    yInfo() << "Feet in support is: " << feetInSupport;
+
+    std::vector<std::string> mapping;
+    if (resourceFinder.check("jointMapping", "Checking joint mapping parameter")) {
+        Bottle *mappingBottle = resourceFinder.find("jointMapping").asList();
+        if (!mappingBottle || mappingBottle->size() != desiredJoints.size()) {
+            yError("jointMapping parameter list has wrong size.");
+            return -2;
+        }
+        mapping.reserve(mappingBottle->size());
+        for (int i = 0; i < mappingBottle->size(); i++) {
+            mapping.push_back(mappingBottle->get(i).asString());
+        }
+        yInfo() << "Joint mapping is (index => joint name): " << mapping;
+    } else {
+        yInfo("Joint mapping not specified");
+    }
+
+
 
 
     OptimProblem problem;
-    if (!problem.initializeModel(filepath)) {
+    if (!problem.initializeModel(filepath, mapping)) {
         yError("Error initializing the robot model");
         return -2;
     }
 
-    problem.solveOptimization(desiredCoM, desiredCoM, feet.asString());
+    problem.solveOptimization(desiredCoM, desiredJoints, feetInSupport);
 
 
     return 0;

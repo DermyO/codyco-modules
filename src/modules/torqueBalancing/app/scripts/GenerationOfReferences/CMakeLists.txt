@@ -11,8 +11,8 @@ find_package(IPOPT REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 
-set(SOURCES src/main.cpp src/OptimProblem.cpp)
-set(INCLUDES include/OptimProblem.h)
+set(SOURCES src/main.cpp src/OptimProblem.cpp src/OptimProblemPimpl.cpp)
+set(INCLUDES include/OptimProblem.h include/OptimProblemPimpl.h)
 
 add_executable(jointReferenceGenerator ${INCLUDES} ${SOURCES})
 
