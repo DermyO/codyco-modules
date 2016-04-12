@@ -20,7 +20,7 @@ typedef enum _FeetInContact {
     BOTH_FEET_IN_CONTACT,
 } FeetInContact;
 
-class OptimProblem::OptimProblemPimpl
+class OptimProblem::OptimProblemPimpl : public Ipopt::TNLP
 {
 public:
     iDynTree::HighLevel::DynamicsComputations dynamics;
@@ -35,6 +35,44 @@ public:
     //Buffers
     Eigen::VectorXd qError;
     Eigen::MatrixXd hessian;
+
+#pragma mark - IpOpt methods
+
+    virtual bool get_nlp_info(Ipopt::Index& n, Ipopt::Index& m, Ipopt::Index& nnz_jac_g,
+                              Ipopt::Index& nnz_h_lag, IndexStyleEnum& index_style);
+
+    virtual bool get_bounds_info(Ipopt::Index n, Ipopt::Number* x_l, Ipopt::Number* x_u,
+                                 Ipopt::Index m, Ipopt::Number* g_l, Ipopt::Number* g_u);
+
+    virtual bool get_starting_point(Ipopt::Index n, bool init_x, Ipopt::Number* x,
+                                    bool init_z, Ipopt::Number* z_L, Ipopt::Number* z_U,
+                                    Ipopt::Index m, bool init_lambda, Ipopt::Number* lambda);
+
+    virtual bool eval_f(Ipopt::Index n, const Ipopt::Number* x,
+                        bool new_x, Ipopt::Number& obj_value);
+
+    virtual bool eval_grad_f(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
+                             Ipopt::Number* grad_f);
+
+    virtual bool eval_g(Ipopt::Index n, const Ipopt::Number* x,
+                        bool new_x, Ipopt::Index m, Ipopt::Number* g);
+
+    virtual bool eval_jac_g(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
+                            Ipopt::Index m, Ipopt::Index nele_jac, Ipopt::Index* iRow,
+                            Ipopt::Index *jCol, Ipopt::Number* values);
+
+    virtual bool eval_h(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
+                        Ipopt::Number obj_factor, Ipopt::Index m, const Ipopt::Number* lambda,
+                        bool new_lambda, Ipopt::Index nele_hess, Ipopt::Index* iRow,
+                        Ipopt::Index* jCol, Ipopt::Number* values);
+
+    virtual void finalize_solution(Ipopt::SolverReturn status, Ipopt::Index n,
+                                   const Ipopt::Number* x, const Ipopt::Number* z_L,
+                                   const Ipopt::Number* z_U, Ipopt::Index m, const Ipopt::Number* g,
+                                   const Ipopt::Number* lambda, Ipopt::Number obj_value,
+                                   const Ipopt::IpoptData* ip_data,
+                                   Ipopt::IpoptCalculatedQuantities* ip_cq);
+
 
 };
 
@@ -84,7 +122,7 @@ bool OptimProblem::solveOptimization(const yarp::sig::Vector& desiredCoM, const 
 
 //    // Create a new instance of your nlp
 //    //  (use a SmartPtr, not raw)
-//    SmartPtr<TNLP> mynlp = new HS071_NLP();
+    SmartPtr<TNLP> mynlp = pimpl;
 //
     // Create a new instance of IpoptApplication
     //  (use a SmartPtr, not raw)
@@ -108,7 +146,7 @@ bool OptimProblem::solveOptimization(const yarp::sig::Vector& desiredCoM, const 
     }
 
     // Ask Ipopt to solve the problem
-    status = app->OptimizeTNLP(this);
+    status = app->OptimizeTNLP(mynlp);
 
     if (status == Solve_Succeeded) {
         printf("\n\n*** The problem solved!\n");
@@ -128,12 +166,12 @@ bool OptimProblem::solveOptimization(const yarp::sig::Vector& desiredCoM, const 
 
 #pragma mark - IpOpt methods
 
-bool OptimProblem::get_nlp_info(Ipopt::Index& n, Ipopt::Index& m, Ipopt::Index& nnz_jac_g,
+bool OptimProblem::OptimProblemPimpl::get_nlp_info(Ipopt::Index& n, Ipopt::Index& m, Ipopt::Index& nnz_jac_g,
                                 Ipopt::Index& nnz_h_lag, IndexStyleEnum& index_style)
 {
-    n = pimpl->qDes.size();
+    n = qDes.size();
     m = 3; // CoM position constraint
-    if (pimpl->feetInContact == BOTH_FEET_IN_CONTACT)
+    if (feetInContact == BOTH_FEET_IN_CONTACT)
         m += 3 //relative transform position constraint
         + 4; //relative transform orientation (expressed in quaternion) constraint
 
@@ -144,7 +182,7 @@ bool OptimProblem::get_nlp_info(Ipopt::Index& n, Ipopt::Index& m, Ipopt::Index& 
     return true;
 }
 
-bool OptimProblem::get_bounds_info(Ipopt::Index n, Ipopt::Number* x_l, Ipopt::Number* x_u,
+bool OptimProblem::OptimProblemPimpl::get_bounds_info(Ipopt::Index n, Ipopt::Number* x_l, Ipopt::Number* x_u,
                      Ipopt::Index m, Ipopt::Number* g_l, Ipopt::Number* g_u)
 {
     for (Index i = 0; i < n; i++) {
@@ -152,14 +190,14 @@ bool OptimProblem::get_bounds_info(Ipopt::Index n, Ipopt::Number* x_l, Ipopt::Nu
         x_u[i] =  1e+19;
     }
     //CoM constraints
-    g_l[0] = g_u[0] = pimpl->comDes[0];
-    g_l[1] = g_u[1] = pimpl->comDes[1];
-    g_l[2] = g_u[2] = pimpl->comDes[2];
+    g_l[0] = g_u[0] = comDes[0];
+    g_l[1] = g_u[1] = comDes[1];
+    g_l[2] = g_u[2] = comDes[2];
 
-    if (pimpl->feetInContact == BOTH_FEET_IN_CONTACT) {
+    if (feetInContact == BOTH_FEET_IN_CONTACT) {
         // relative transform position constraint
-        iDynTree::Position position = pimpl->leftToRightFootTransformation.getPosition();
-        iDynTree::Rotation rotation = pimpl->leftToRightFootTransformation.getRotation();
+        iDynTree::Position position = leftToRightFootTransformation.getPosition();
+        iDynTree::Rotation rotation = leftToRightFootTransformation.getRotation();
         g_l[3] = g_u[3] = position(0);
         g_l[4] = g_u[4] = position(1);
         g_l[5] = g_u[5] = position(2);
@@ -174,7 +212,7 @@ bool OptimProblem::get_bounds_info(Ipopt::Index n, Ipopt::Number* x_l, Ipopt::Nu
     return true;
 }
 
-bool OptimProblem::get_starting_point(Ipopt::Index n, bool init_x, Ipopt::Number* x,
+bool OptimProblem::OptimProblemPimpl::get_starting_point(Ipopt::Index n, bool init_x, Ipopt::Number* x,
                         bool init_z, Ipopt::Number* z_L, Ipopt::Number* z_U,
                         Ipopt::Index m, bool init_lambda, Ipopt::Number* lambda)
 {
@@ -184,42 +222,42 @@ bool OptimProblem::get_starting_point(Ipopt::Index n, bool init_x, Ipopt::Number
     assert(!init_lambda);
 
     for (Index i = 0; i < n; ++i) {
-        x[i] = pimpl->qDes[i];
+        x[i] = qDes[i];
     }
     return true;
 }
 
-bool OptimProblem::eval_f(Ipopt::Index n, const Ipopt::Number* x,
+bool OptimProblem::OptimProblemPimpl::eval_f(Ipopt::Index n, const Ipopt::Number* x,
             bool new_x, Ipopt::Number& obj_value)
 {
     //What to do if new_x == false?
     //Computing objective: 1/2 * || q - q_des ||^2
 
     Eigen::Map<const Eigen::VectorXd> q(x, n);
-    pimpl->qError = q - pimpl->qDes;
-    obj_value = 0.5 * pimpl->qError.transpose() * pimpl->qError;
+    qError = q - qDes;
+    obj_value = 0.5 * qError.transpose() * qError;
     return true;
 }
 
-bool OptimProblem::eval_grad_f(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
+bool OptimProblem::OptimProblemPimpl::eval_grad_f(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
                  Ipopt::Number* grad_f)
 {
     //Gradient of the objective.
     //Simply q - qDes
     Eigen::Map<const Eigen::VectorXd> q(x, n);
     Eigen::Map<Eigen::VectorXd> gradient(grad_f, n);
-    gradient = q - pimpl->qDes;
+    gradient = q - qDes;
     return true;
 }
 
-bool OptimProblem::eval_g(Ipopt::Index n, const Ipopt::Number* x,
+bool OptimProblem::OptimProblemPimpl::eval_g(Ipopt::Index n, const Ipopt::Number* x,
             bool new_x, Ipopt::Index m, Ipopt::Number* g)
 {
     // CoM forward kinematic
     // must switch branch in iDynTree
 
-    if (pimpl->feetInContact == BOTH_FEET_IN_CONTACT) {
-        iDynTree::Transform kinematic = pimpl->dynamics.getRelativeTransform("l_sole", "r_sole");
+    if (feetInContact == BOTH_FEET_IN_CONTACT) {
+        iDynTree::Transform kinematic = dynamics.getRelativeTransform("l_sole", "r_sole");
         iDynTree::Position position = kinematic.getPosition();
         iDynTree::Rotation rotation = kinematic.getRotation();
         g[3] = position(0);
@@ -234,7 +272,7 @@ bool OptimProblem::eval_g(Ipopt::Index n, const Ipopt::Number* x,
     }
 }
 
-bool OptimProblem::eval_jac_g(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
+bool OptimProblem::OptimProblemPimpl::eval_jac_g(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
                 Ipopt::Index m, Ipopt::Index nele_jac, Ipopt::Index* iRow,
                 Ipopt::Index *jCol, Ipopt::Number* values)
 {
@@ -245,13 +283,13 @@ bool OptimProblem::eval_jac_g(Ipopt::Index n, const Ipopt::Number* x, bool new_x
         // CoM Jacobian
         // must switch branch in iDynTree
 
-        if (pimpl->feetInContact == BOTH_FEET_IN_CONTACT) {
+        if (feetInContact == BOTH_FEET_IN_CONTACT) {
             
         }
     }
 }
 
-bool OptimProblem::eval_h(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
+bool OptimProblem::OptimProblemPimpl::eval_h(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
             Ipopt::Number obj_factor, Ipopt::Index m, const Ipopt::Number* lambda,
             bool new_lambda, Ipopt::Index nele_hess, Ipopt::Index* iRow,
             Ipopt::Index* jCol, Ipopt::Number* values)
@@ -265,7 +303,7 @@ bool OptimProblem::eval_h(Ipopt::Index n, const Ipopt::Number* x, bool new_x,
     }
 }
 
-void OptimProblem::finalize_solution(Ipopt::SolverReturn status, Ipopt::Index n,
+void OptimProblem::OptimProblemPimpl::finalize_solution(Ipopt::SolverReturn status, Ipopt::Index n,
                                const Ipopt::Number* x, const Ipopt::Number* z_L,
                                const Ipopt::Number* z_U, Ipopt::Index m, const Ipopt::Number* g,
                                const Ipopt::Number* lambda, Ipopt::Number obj_value,
